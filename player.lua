@@ -26,7 +26,7 @@ local MusicUtil = require "musicutil"
 local UI = require "ui"
 local Formatters = require "formatters"
 local BeatClock = require "beatclock"
-
+local cube_midi
 engine.name = "Timber"
 
 local options = {}
@@ -42,9 +42,10 @@ local grid_w, grid_h = 16, 8
 
 local midi_in_device
 local midi_clock_in_device
+local midi_song_in_device
 local grid_device
 
-local NUM_SAMPLES = 256
+local NUM_SAMPLES = 52
 
 local beat_clock
 local note_queue = {}
@@ -72,6 +73,18 @@ local current_sample_id = 0
 local shift_mode = false
 local file_select_active = false
 
+-- Gordey settings
+local draw_song_name = false
+local song_count = 10
+local song_max_count = 100
+local current_song = 1
+local current_song_name = "--"
+local current_pset_file = _path.data.."timber/player/player-01.pset"
+local current_song_index = 1
+local can_switch_song = false
+local on_song_load_press = false
+local songs_file = _path.data.."timber/songs.data"
+local songs_data = {}
 
 local function load_folder(file, add)
   
@@ -381,6 +394,121 @@ function key(n, z)
   screen_dirty = true
 end
 
+
+local load_first_pset_counter = 0
+local load_first_pset_metro
+local loading_song = false
+local loading_first_pset = false
+
+local function load_first_pset()
+  load_first_pset_counter = load_first_pset_counter + 1
+  
+  if load_first_pset_counter == 2 then
+    if can_switch_song then
+      on_song_load_press = true
+      local pset_file = _path.data.."timber/player/player-01.pset"
+      loading_song = true
+      loading_first_pset = true
+      params:read(pset_file)
+      load_first_pset_counter = 0
+    end
+  end
+  
+end
+
+
+local function setup_song()
+  local song_to_load = songs_data[current_song_index]
+  local song_number = song_to_load.pset_number
+  local name = song_to_load.name
+    
+  local pset_num = string.format("%02d",song_number)
+  local pset_file = _path.data.."timber/player/player-"..pset_num..".pset"
+  
+  if file_exists(pset_file) then
+    draw_song_name = true
+    on_song_load_press = false
+    current_pset_file = pset_file
+    current_song_name = name
+    can_switch_song = true
+  else 
+    can_switch_song = false
+  end
+end
+
+-- Gordey Midi Event
+local function midi_song_event(device_id, data)
+  local msg = midi.to_msg(data)
+  if msg.type == "note_on" then
+    if loading_song then
+      return
+    end
+    
+    local song_to_load = songs_data[current_song_index]
+    local song_number = song_to_load.pset_number
+    
+    if song_number == song_max_count then
+      current_song_index = 1
+      setup_song()
+    else
+      setup_song()
+      current_song_index = current_song_index + 1
+    end
+      
+    load_first_pset_counter = 0
+    load_first_pset_metro:stop()
+    load_first_pset_metro.time = 0.5
+    load_first_pset_metro.count = 2
+    load_first_pset_metro.event = load_first_pset
+    load_first_pset_metro:start()
+    draw_song()
+    
+  elseif msg.type == "note_off" then
+
+  end  
+end
+
+local delay_counter = 0
+local counter
+
+function count()
+  delay_counter = delay_counter + 1
+  draw_song()
+  if delay_counter == 2 then
+    print("-------- delay "..delay_counter.." file"..current_pset_file)
+    loading_song = true
+    params:read(current_pset_file)
+    loading_song = false
+    draw_song_name = false 
+    screen.font_size(8)
+  end
+end
+
+-- Gordey Load Next
+function on_action_read()
+  params.action_read = function(filename,silent,number)
+    if loading_first_pset then
+      loading_first_pset = false
+      
+      if can_switch_song then
+        can_switch_song = false
+        loading_song = true
+        
+        print("--- load next")
+        delay_counter = 0
+        counter:stop()
+        counter.time = 0.5
+        counter.count = 2
+        counter.event = count
+        counter:start()
+      end
+    else 
+      loading_song = false
+    end
+  end
+end
+
+
 -- MIDI input
 local function midi_event(device_id, data)
   
@@ -394,30 +522,37 @@ local function midi_event(device_id, data)
       -- Note off
       if msg.type == "note_off" then
         key_up(msg.note)
-      
+        cube_midi:note_off(msg.note)
       -- Note on
       elseif msg.type == "note_on" then
+     
+        --local dest = {params:get("osc_address") ,10101}
+        --osc.send(dest, "/note", {msg.note, 1})
+        
         key_down(msg.note, msg.vel / 127)
         
         if params:get("follow") >= 3 then
           set_sample_id(msg.note)
         end
         
-      -- Key pressure
-      elseif msg.type == "key_pressure" then
-        set_pressure_voice(msg.note, msg.val / 127)
+        cube_midi:note_on(msg.note, msg.vel)
         
-      -- Channel pressure
-      elseif msg.type == "channel_pressure" then
-        set_pressure_all(msg.val / 127)
-        
-      -- Pitch bend
-      elseif msg.type == "pitchbend" then
-        local bend_st = (util.round(msg.val / 2)) / 8192 * 2 -1 -- Convert to -1 to 1
-        local bend_range = params:get("bend_range")
-        set_pitch_bend_all(bend_st * bend_range)
-        
+        -- Key pressure
+        elseif msg.type == "key_pressure" then
+          set_pressure_voice(msg.note, msg.val / 127)
+          
+        -- Channel pressure
+        elseif msg.type == "channel_pressure" then
+          set_pressure_all(msg.val / 127)
+          
+        -- Pitch bend
+        elseif msg.type == "pitchbend" then
+          local bend_st = (util.round(msg.val / 2)) / 8192 * 2 -1 -- Convert to -1 to 1
+          local bend_range = params:get("bend_range")
+          set_pitch_bend_all(bend_st * bend_range)
+      
       end
+     
     end
   end
   
@@ -437,6 +572,7 @@ local function reconnect_midi_ins()
   midi_clock_in_device = midi.connect(params:get("midi_clock_in_device"))
   midi_in_device.event = function(data) midi_event(params:get("midi_in_device"), data) end
   midi_clock_in_device.event = function(data) midi_event(params:get("midi_clock_in_device"), data) end
+
 end
 
 -- Grid event
@@ -574,7 +710,7 @@ function GlobalView:update()
 end
 
 function GlobalView:redraw()
-  
+
   -- Beat visual
   for i = 1, 4 do
     
@@ -686,6 +822,12 @@ function redraw()
   
   screen.clear()
   
+  if draw_song_name then
+    draw_song()
+    return
+  end
+  
+  
   if file_select_active or Timber.file_select_active then
     Timber.FileSelect.redraw()
     return
@@ -716,14 +858,53 @@ function redraw()
   screen.update()
 end
 
+function load_songs()
+  songs_data = tab.load(songs_file)
+  for i = 1, #songs_data do
+    local song = songs_data[i]
+    params:set("song_"..i, song.pset_number)
+  end
+end
+
+function file_exists(name)
+   local f=io.open(name,"r")
+   if f~=nil then io.close(f) return true else return false end
+end
+
+function draw_song()
+  screen.clear()
+  screen.font_size(17)
+  screen.level(15)
+  screen.move(0,40)
+  screen.text(current_song_name)
+  screen.update()
+end
+
+
+
+function get_line(filename, line_number)
+  local i = 0
+  for line in io.lines(filename) do
+    i = i + 1
+    if i == line_number then
+      return line
+    end
+  end
+  return nil -- line not found
+end
 
 function init()
+  counter = metro.init()
+  load_first_pset_metro = metro.init()
   
   midi_in_device = midi.connect(1)
   midi_in_device.event = function(data) midi_event(1, data) end
   
   midi_clock_in_device = midi.connect(1)
   midi_clock_in_device.event = function(data) midi_event(1, data) end
+  
+  midi_song_in_device = midi.connect(3)
+  midi_song_in_device.event = function(data) midi_song_event(3, data) end
   
   local grid = util.file_exists(_path.code.."midigrid") and include "midigrid/lib/mg_128" or grid
   grid_device = grid.connect(1)
@@ -776,6 +957,48 @@ function init()
   
   -- Add params
   
+  -- Gordey parameters
+  params:add_separator("OSC")
+  params:add_text("osc_address", "adress", "192.168.0.189")
+  
+  params:add_separator("Songs")
+  
+  for i=1, song_count do
+    params:add{type = "number", id = "song_"..i, name = "Song "..i, min = 1, max = song_max_count, default = song_max_count, allow_pmap = false}
+  end
+  
+  params:add{type ="trigger", id = "save_songs", name = "save songs", default = 0, 
+    action = function()
+      songs_data = {}
+      local songs_file = _path.data.."timber/songs.data"
+      
+      print("save to: "..songs_file) 
+      
+      for i=1, song_count do
+        local song = {}
+        song.pset_number = params:get("song_"..i)
+        local pset_num = string.format("%02d",song.pset_number)
+        
+        song.name = "Not Found"
+        
+        local file_name = _path.data.."timber/player/player-"..pset_num..".pset"
+        local file = io.open(file_name, "r")
+        if file then
+          local n = get_line(file_name, 1)
+          song.name = string.sub(n, 4)
+          io.close(file)
+        end
+     
+        
+        table.insert(songs_data, song)
+      end
+     
+      tab.save(songs_data, songs_file)  
+      
+      print("save data")
+    end 
+  }
+  
   params:add_separator("In/Out")
   
   params:add{type = "number", id = "grid_device", name = "Grid Device", min = 1, max = 4, default = 1,
@@ -792,6 +1015,8 @@ function init()
   params:add{type = "option", id = "midi_in_channel", name = "MIDI In Channel", options = channels}
     
   params:add{type = "number", id = "midi_clock_in_device", name = "MIDI Clock In Device", min = 1, max = 4, default = 1, action = reconnect_midi_ins}
+  
+  params:add{type = "number", id = "midi_song_in_device", name = "MIDI Song Change Device", min = 1, max = 4, default = 1, action = reconnect_midi_ins}
   
   params:add{type = "option", id = "clock", name = "Clock", options = {"Internal", "External"}, default = beat_clock.external or 2 and 1,
     action = function(value)
@@ -897,5 +1122,9 @@ function init()
   grid_redraw_metro:start(1 / GRID_FRAMERATE)
   
   beat_clock:start()
+  on_action_read()
+  load_songs()
   
+  cube_midi = midi.connect(2)
+  cube_midi.event = nil
 end

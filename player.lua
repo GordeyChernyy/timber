@@ -148,7 +148,13 @@ local function note_on(sample_id, vel)
   if Timber.samples_meta[sample_id].num_frames > 0 then
     -- print("note_on", sample_id)
     vel = vel or 1
-    engine.noteOn(sample_id, MusicUtil.note_num_to_freq(60), vel, sample_id)
+
+    local mute_group = params:get("mute_group_" .. sample_id)
+    if mute_group == -1  then
+      mute_group = sample_id
+    end
+
+    engine.noteOn(mute_group, MusicUtil.note_num_to_freq(60), vel, sample_id)
     sample_status[sample_id] = STATUS.PLAYING
     global_view:add_play_visual()
     screen_dirty = true
@@ -158,7 +164,12 @@ end
 
 local function note_off(sample_id)
   -- print("note_off", sample_id)
-  engine.noteOff(sample_id)
+  local mute_group = params:get("mute_group_" .. sample_id)
+  if mute_group == -1  then
+    mute_group = sample_id
+  end
+
+  engine.noteOff(mute_group)
   screen_dirty = true
   grid_dirty = true
 end
@@ -1127,4 +1138,8 @@ function init()
   
   cube_midi = midi.connect(2)
   cube_midi.event = nil
+end
+
+function r()
+  norns.script.load(norns.state.script)
 end

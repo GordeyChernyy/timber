@@ -326,6 +326,7 @@ local function sample_loaded(id, streaming, num_frames, num_channels, sample_rat
     params:set("loop_end_frame_" .. id, 1)
     params:set("loop_end_frame_" .. id, num_frames)
     
+    params:set("mute_group_" .. id, -1)
     params:set("transpose_" .. id, 0)
     params:set("detune_cents_" .. id, 0)
     params:set("scale_by_" .. id, 1)
@@ -752,7 +753,7 @@ end
 function Timber.add_sample_params(id, include_beat_params, extra_params)
   
   if id then
-    local num_params = 50
+    local num_params = 51
     if include_beat_params then num_params = num_params + 1 end
     if extra_params then num_params = num_params + #extra_params end
     params:add_group("Sample " .. id, num_params)
@@ -761,7 +762,10 @@ function Timber.add_sample_params(id, include_beat_params, extra_params)
   if include_beat_params then beat_params = true end
   
   params:add_separator("Sample")
-  
+  params:add{type = "number", id = "mute_group_" .. id, name = "Mute Group", min = -1, max = 4, default = -1, action = function(value)
+    Timber.views_changed_callback(id)
+    Timber.setup_params_dirty = true
+  end}
   params:add{type = "file", id = "sample_" .. id, name = "Sample", action = function(value)
     if samples_meta[id].num_frames > 0 or value ~= "-" then
       
@@ -847,7 +851,6 @@ function Timber.add_sample_params(id, include_beat_params, extra_params)
   end
   
   params:add_separator("Playback")
-  
   params:add{type = "option", id = "play_mode_" .. id, name = "Play Mode", options = options.PLAY_MODE_BUFFER, default = options.PLAY_MODE_BUFFER_DEFAULT, action = function(value)
     set_play_mode(id, lookup_play_mode(id))
     waveform_last_edited = {id = id}
@@ -1098,10 +1101,11 @@ local function update_setup_params(self)
     "transpose_" .. self.sample_id,
     "detune_cents_" .. self.sample_id,
     "scale_by_" .. self.sample_id,
-    scale
+    scale,
+    "mute_group_" .. self.sample_id
   }
   
-  self.names_list.entries = {"Load", "Clear", "Move", "Copy", "Copy Params", "Quality", "Transpose", "Detune", "Scale By", "Scale"}
+  self.names_list.entries = {"Load", "Clear", "Move", "Copy", "Copy Params", "Quality", "Transpose", "Detune", "Scale By", "Scale", "Mute Group"}
   self.selected_param_name = self.param_names[self.index]
   
   for _, v in ipairs(extra_param_ids) do

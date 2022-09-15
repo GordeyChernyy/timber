@@ -73,6 +73,12 @@ local current_sample_id = 0
 local shift_mode = false
 local file_select_active = false
 
+-- Sequencer Settings
+local sequins = require 'sequins'
+local sequence_trigger_count = 10
+local sequence_note_count = 5
+local sequence_data = {}
+
 -- Gordey settings
 local draw_song_name = false
 local song_count = 10
@@ -529,18 +535,32 @@ local function midi_event(device_id, data)
   -- MIDI In
   if device_id == params:get("midi_in_device") then
     if channel_param == 1 or (channel_param > 1 and msg.ch == channel_param - 1) then
-      
+
       -- Note off
       if msg.type == "note_off" then
-        key_up(msg.note)
+        
+        local trigger = get_trigger(msg.note)
+        local note = -1
+        if trigger == nil then
+          note = msg.note
+        end
+
+        key_up(note)
+        
+        if trigger ~= nil then
+          sequence_next(trigger)
+        end
+
         cube_midi:note_off(msg.note)
+
       -- Note on
       elseif msg.type == "note_on" then
-     
-        --local dest = {params:get("osc_address") ,10101}
-        --osc.send(dest, "/note", {msg.note, 1})
-        
-        key_down(msg.note, msg.vel / 127)
+        local note = get_note(msg.note)
+        if note == -1 then
+          note = msg.note
+        end
+
+        key_down(note, msg.vel / 127)
         
         if params:get("follow") >= 3 then
           set_sample_id(msg.note)
@@ -560,10 +580,8 @@ local function midi_event(device_id, data)
         elseif msg.type == "pitchbend" then
           local bend_st = (util.round(msg.val / 2)) / 8192 * 2 -1 -- Convert to -1 to 1
           local bend_range = params:get("bend_range")
-          set_pitch_bend_all(bend_st * bend_range)
-      
+          set_pitch_bend_all(bend_st * bend_range)    
       end
-     
     end
   end
   
@@ -904,6 +922,104 @@ function get_line(filename, line_number)
   return nil -- line not found
 end
 
+-- Sequencer Init
+function init_sequencer()
+  params:add_separator("Sequencer")
+  for trigger_index=1, sequence_trigger_count do
+    params:add_group("Sequence Trigger " .. trigger_index, sequence_note_count+1)
+    params:add{
+      type = "number", 
+      id = "sequence_trigger_"..trigger_index, 
+      name = "Sequence Trigger ", 
+      min = -1, 
+      max = 127, 
+      default = -1, 
+      allow_pmap = false,
+      action = function() setup_sequencer() end
+    }
+    for note_index=1, sequence_note_count do
+      params:add{
+        type = "number", 
+        id = "sequence_note_"..trigger_index.."_"..note_index, 
+        name = "Sequence Note "..note_index, 
+        min = -1, 
+        max = 127, 
+        default = -1, 
+        allow_pmap = false,
+        action = function() setup_sequencer() end
+      }
+    end
+  end
+end
+
+-- Sequencer Setup
+function setup_sequencer()
+  print("Setup Sequencer")
+  local triggers = {}
+  for trigger_index=1, sequence_trigger_count do
+    local trigger_note = params:get("sequence_trigger_"..trigger_index)
+    
+    if trigger_note ~= -1 then
+      local trigger_data = {}
+      trigger_data.trigger_note = trigger_note
+      trigger_data.current_note = -1
+      local sequence = {}
+
+      for note_index=1, sequence_note_count do
+        local sequence_note = params:get("sequence_note_"..trigger_index.."_"..note_index)
+        if sequence_note ~= -1 then
+          table.insert(sequence, sequence_note)
+        end
+      end
+
+      trigger_data.sequence = sequins:settable(sequence)
+      trigger_data.current_note = trigger_data.sequence()
+      table.insert(triggers, trigger_data)
+    end
+  end
+  debug_sequencer()
+end
+
+function get_note(note)
+  for i = 1, #triggers do
+    local trigger = triggers[i]
+    if trigger.trigger_note == note then
+      return trigger.current_note
+    end
+  end
+  return -1
+end
+
+function get_trigger(note)
+  for i = 1, #triggers do
+    local trigger = triggers[i]
+    if trigger.trigger_note == note then
+      return trigger
+    end
+  end
+  return nil
+end
+
+function sequence_next(trigger)
+  trigger.sequence:step(1)
+  trigger.current_note = trigger.sequence()
+end
+
+
+function debug_sequencer()
+  for i = 1, #triggers do
+    local trigger = triggers[i]
+    
+    print("- trigger "..trigger.trigger_note)
+    
+    local val = trigger.sequence()
+    print("- value "..val)
+    print("- value "..val)
+  end
+end
+
+
+-- Init
 function init()
   counter = metro.init()
   load_first_pset_metro = metro.init()
@@ -965,13 +1081,10 @@ function init()
   Timber.waveform_changed_callback = callback_set_waveform_dirty
   Timber.play_positions_changed_callback = callback_set_waveform_dirty
   Timber.views_changed_callback = callback_set_screen_dirty
-  
-  -- Add params
-  
-  -- Gordey parameters
-  params:add_separator("OSC")
-  params:add_text("osc_address", "adress", "192.168.0.189")
-  
+
+  init_sequencer()
+
+  -- Songs Params
   params:add_separator("Songs")
   
   for i=1, song_count do

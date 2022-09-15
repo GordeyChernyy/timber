@@ -741,7 +741,7 @@ function Timber.add_params()
     Timber.views_changed_callback(nil)
     Timber.lfo_2_dirty = true
   end}
-  params:add{typ  e = "option", id = "lfo_2_wave_shape", name = "LFO2 Shape", options = options.LFO_WAVE_SHAPE, default = 4, action = function(value)
+  params:add{type = "option", id = "lfo_2_wave_shape", name = "LFO2 Shape", options = options.LFO_WAVE_SHAPE, default = 4, action = function(value)
     engine.lfo2WaveShape(value - 1)
     lfos_last_edited = {id = nil, param = "lfo_2_wave_shape"}
     Timber.views_changed_callback(nil)

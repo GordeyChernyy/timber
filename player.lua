@@ -76,8 +76,9 @@ local file_select_active = false
 -- Sequencer Settings
 local sequins = require 'sequins'
 local sequence_trigger_count = 10
-local sequence_note_count = 5
+local sequence_note_count = 8
 local sequence_data = {}
+local sequence_types = {"holder", "step back"}
 
 -- Gordey settings
 local draw_song_name = false
@@ -543,13 +544,11 @@ local function midi_event(device_id, data)
         local note = -1
         if trigger == nil then
           note = msg.note
+        else
+          note = trigger.current_note
         end
 
         key_up(note)
-        
-        if trigger ~= nil then
-          sequence_next(trigger)
-        end
 
         cube_midi:note_off(msg.note)
 
@@ -926,11 +925,27 @@ end
 function init_sequencer()
   params:add_separator("Sequencer")
   for trigger_index=1, sequence_trigger_count do
-    params:add_group("Sequence Trigger " .. trigger_index, sequence_note_count+1)
+    params:add_group("Sequence Trigger " .. trigger_index, sequence_note_count+3)
+    
     params:add{
       type = "number", 
       id = "sequence_trigger_"..trigger_index, 
       name = "Sequence Trigger ", 
+      min = -1, 
+      max = 127, 
+      default = -1, 
+      allow_pmap = false,
+      action = function() setup_sequencer() end
+    }
+    params:add{
+      type = "option", 
+      id = "sequence_type_"..trigger_index, 
+      name = "Sequence Type", options = sequence_types
+    }
+    params:add{
+      type = "number", 
+      id = "sequence_holder_"..trigger_index, 
+      name = "Sequence Holder", 
       min = -1, 
       max = 127, 
       default = -1, 
@@ -955,7 +970,7 @@ end
 -- Sequencer Setup
 function setup_sequencer()
   print("Setup Sequencer")
-  local triggers = {}
+  sequence_data = {}
   for trigger_index=1, sequence_trigger_count do
     local trigger_note = params:get("sequence_trigger_"..trigger_index)
     
@@ -963,6 +978,8 @@ function setup_sequencer()
       local trigger_data = {}
       trigger_data.trigger_note = trigger_note
       trigger_data.current_note = -1
+      trigger_data.type = sequence_types[params:get("sequence_type_"..trigger_index)]
+      trigger_data.holder_note = params:get("sequence_holder_"..trigger_index)
       local sequence = {}
 
       for note_index=1, sequence_note_count do
@@ -971,50 +988,79 @@ function setup_sequencer()
           table.insert(sequence, sequence_note)
         end
       end
+      
+      if #sequence > 0 then
+        trigger_data.sequence = sequins(sequence)
+        trigger_data.sequence_exist = true
+        trigger_data.current_note = trigger_data.sequence()
+      else 
+        trigger_data.sequence_exist = false
+      end
 
-      trigger_data.sequence = sequins:settable(sequence)
-      trigger_data.current_note = trigger_data.sequence()
-      table.insert(triggers, trigger_data)
+      table.insert(sequence_data, trigger_data)
     end
   end
-  debug_sequencer()
+  for i = 1, #sequence_data do
+    local trigger = sequence_data[i]
+    if trigger.type == "step back" then
+      trigger.holder = get_trigger(trigger.holder_note)
+    end
+  end
+  -- debug_sequencer()
 end
 
+-- Get Note
 function get_note(note)
-  for i = 1, #triggers do
-    local trigger = triggers[i]
+  for i = 1, #sequence_data do
+    local trigger = sequence_data[i]
     if trigger.trigger_note == note then
+      if trigger.type == "step back" then
+        trigger.holder.sequence:step(-1)
+        trigger.holder.current_note = trigger.holder.sequence()
+        return trigger.holder.current_note
+      end
+      trigger.sequence:step(1)
+      trigger.current_note = trigger.sequence()
       return trigger.current_note
     end
   end
   return -1
 end
 
+-- Get Trigger
 function get_trigger(note)
-  for i = 1, #triggers do
-    local trigger = triggers[i]
+  for i = 1, #sequence_data do
+    local trigger = sequence_data[i]
     if trigger.trigger_note == note then
+      if trigger.type == "step back" then
+        return trigger.holder
+      end
       return trigger
     end
   end
   return nil
 end
 
-function sequence_next(trigger)
+-- Sequence Next
+function progress_sequence(trigger)
   trigger.sequence:step(1)
   trigger.current_note = trigger.sequence()
 end
 
-
 function debug_sequencer()
-  for i = 1, #triggers do
-    local trigger = triggers[i]
+  for i = 1, #sequence_data do
+    local trigger = sequence_data[i]
     
     print("- trigger "..trigger.trigger_note)
-    
-    local val = trigger.sequence()
-    print("- value "..val)
-    print("- value "..val)
+    print("- type "..trigger.type)
+    if trigger.sequence_exist then
+      local val = trigger.sequence()
+      print("-- value "..val)
+      local val = trigger.sequence()
+      print("-- value "..val)
+      local val = trigger.sequence()
+      print("-- value "..val)
+    end
   end
 end
 

@@ -78,7 +78,7 @@ local sequins = require 'sequins'
 local sequence_trigger_count = 10
 local sequence_note_count = 8
 local sequence_data = {}
-local sequence_types = {"holder", "step back"}
+local sequence_types = {"holder", "step back", "reset", "repeat"}
 
 -- Gordey settings
 local draw_song_name = false
@@ -557,9 +557,13 @@ local function midi_event(device_id, data)
         local note = get_note(msg.note)
         if note == -1 then
           note = msg.note
+          key_down(note, msg.vel / 127)
+        else
+          key_down(note, 1)
         end
 
-        key_down(note, msg.vel / 127)
+
+        
         
         if params:get("follow") >= 3 then
           set_sample_id(msg.note)
@@ -1002,7 +1006,7 @@ function setup_sequencer()
   end
   for i = 1, #sequence_data do
     local trigger = sequence_data[i]
-    if trigger.type == "step back" then
+    if trigger.type == "step back" or trigger.type == "reset" or trigger.type == "repeat" then
       trigger.holder = get_trigger(trigger.holder_note)
     end
   end
@@ -1018,6 +1022,13 @@ function get_note(note)
         trigger.holder.sequence:step(-1)
         trigger.holder.current_note = trigger.holder.sequence()
         return trigger.holder.current_note
+      elseif trigger.type == "reset" then
+        trigger.holder.sequence:reset()
+        trigger.holder.sequence:step(1)
+        trigger.holder.current_note = trigger.holder.sequence()
+        return trigger.holder.current_note
+      elseif trigger.type == "repeat" then
+        return trigger.holder.current_note
       end
       trigger.sequence:step(1)
       trigger.current_note = trigger.sequence()
@@ -1032,7 +1043,7 @@ function get_trigger(note)
   for i = 1, #sequence_data do
     local trigger = sequence_data[i]
     if trigger.trigger_note == note then
-      if trigger.type == "step back" then
+      if trigger.type == "step back" or trigger.type == "reset" or trigger.type == "repeat" then
         return trigger.holder
       end
       return trigger
